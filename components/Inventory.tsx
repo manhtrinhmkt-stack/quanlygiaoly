@@ -1,17 +1,23 @@
 
 import React, { useState, useMemo } from 'react';
-import { InventoryItem } from '../types';
+import { InventoryItem, Teacher, hasPermission } from '../types';
 import { Package, Search, Plus, Minus, AlertTriangle, Edit, Trash2, CheckCircle2, History, TrendingUp, AlertCircle, Shirt, Book, Hexagon } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface InventoryProps {
     items: InventoryItem[];
     setItems: (items: InventoryItem[]) => void;
+    currentUser: Teacher | null;
 }
 
-export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
+export const Inventory: React.FC<InventoryProps> = ({ items, setItems, currentUser }) => {
+  const isAdmin = currentUser?.role === 'ADMIN';
+  const canEditInventory = hasPermission(currentUser, 'inventory', 'edit');
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [toast, setToast] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'price' | 'category'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Modals
   const [showItemModal, setShowItemModal] = useState(false);
@@ -30,11 +36,6 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
   const [adjustType, setAdjustType] = useState<'IMPORT' | 'EXPORT'>('IMPORT');
   const [adjustReason, setAdjustReason] = useState('');
 
-  const showToast = (message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 3000);
-  };
-
   // Helper to format string with dots: 1000000 -> 1.000.000
   const formatNumberWithDots = (val: string) => {
     const rawValue = val.replace(/\D/g, ''); // Remove non-digits
@@ -46,8 +47,20 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
       const matchSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
       const matchCat = filterCategory === 'all' || item.category === filterCategory;
       return matchSearch && matchCat;
+    }).sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'name') {
+        comparison = a.name.localeCompare(b.name, 'vi');
+      } else if (sortBy === 'quantity') {
+        comparison = a.quantity - b.quantity;
+      } else if (sortBy === 'price') {
+        comparison = a.price - b.price;
+      } else if (sortBy === 'category') {
+        comparison = a.category.localeCompare(b.category);
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [items, searchTerm, filterCategory]);
+  }, [items, searchTerm, filterCategory, sortBy, sortOrder]);
 
   const stats = useMemo(() => {
     const totalItems = items.length;
@@ -82,7 +95,11 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
   };
 
   const handleSaveItem = () => {
-    if (!newItemName) return alert('Vui lòng nhập tên vật tư');
+    if (!canEditInventory) {
+        toast.error('Bạn không có quyền thêm hoặc sửa vật tư!');
+        return;
+    }
+    if (!newItemName) return toast.error('Vui lòng nhập tên vật tư');
     
     const rawPrice = parseInt(newItemPriceStr.replace(/\./g, ''), 10) || 0;
 
@@ -97,7 +114,7 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
             price: rawPrice
         } : i);
         setItems(updated);
-        showToast('Đã cập nhật thông tin vật tư!');
+        toast.success('Đã cập nhật thông tin vật tư!');
     } else {
         const newItem: InventoryItem = {
             id: `INV${Date.now()}`,
@@ -109,16 +126,18 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
             price: rawPrice
         };
         setItems([...items, newItem]);
-        showToast('Đã thêm vật tư mới thành công!');
+        toast.success('Đã thêm vật tư mới thành công!');
     }
     setShowItemModal(false);
   };
 
   const handleDelete = (id: string) => {
-      if (window.confirm("Bạn có chắc muốn xóa vật tư này không?")) {
-          setItems(items.filter(i => i.id !== id));
-          showToast('Đã xóa vật tư!');
+      if (!canEditInventory) {
+          toast.error('Bạn không có quyền xóa vật tư!');
+          return;
       }
+      setItems(items.filter(i => i.id !== id));
+      toast.success('Đã xóa vật tư!');
   };
 
   const handleOpenAdjust = (item: InventoryItem) => {
@@ -130,17 +149,21 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
   };
 
   const handleExecuteAdjust = () => {
+      if (!canEditInventory) {
+          toast.error('Bạn không có quyền nhập/xuất kho!');
+          return;
+      }
       if (!selectedItem) return;
-      if (adjustQty <= 0) return alert("Số lượng phải lớn hơn 0");
+      if (adjustQty <= 0) return toast.error("Số lượng phải lớn hơn 0");
 
       const delta = adjustType === 'IMPORT' ? adjustQty : -adjustQty;
       const newQty = selectedItem.quantity + delta;
 
-      if (newQty < 0) return alert("Không thể xuất quá số lượng tồn kho!");
+      if (newQty < 0) return toast.error("Không thể xuất quá số lượng tồn kho!");
 
       const updated = items.map(i => i.id === selectedItem.id ? { ...i, quantity: newQty } : i);
       setItems(updated);
-      showToast(`Đã ${adjustType === 'IMPORT' ? 'nhập' : 'xuất'} kho thành công!`);
+      toast.success(`Đã ${adjustType === 'IMPORT' ? 'nhập' : 'xuất'} kho thành công!`);
       setShowAdjustModal(false);
   };
 
@@ -155,13 +178,11 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
 
   return (
     <div className="p-4 md:p-6 h-screen flex flex-col relative bg-slate-100/50">
-      {toast && (
-        <div className="fixed top-6 right-6 z-[100] animate-slide-in">
-           <div className="bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border border-emerald-500/50">
-              <CheckCircle2 size={24} />
-              <span className="font-bold">{toast}</span>
-           </div>
-        </div>
+      {!canEditInventory && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-amber-800 text-xs font-bold mb-4 shadow-sm shrink-0">
+              <span className="text-amber-600 shrink-0">⚠️</span>
+              <span>Bạn không có quyền chỉnh sửa kho vật tư. Toàn bộ thông tin hiển thị dưới dạng Chỉ Đọc.</span>
+          </div>
       )}
 
       <div className="flex justify-between items-center mb-6">
@@ -169,7 +190,11 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
             <h2 className="text-2xl font-bold text-slate-800">Kho & Vật Tư</h2>
             <p className="text-slate-500 text-sm">Quản lý sách, đồng phục và tài sản chung</p>
         </div>
-        <button onClick={handleOpenAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm font-bold transition-all text-sm">
+        <button 
+          disabled={!canEditInventory}
+          onClick={handleOpenAdd} 
+          className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg shadow-sm font-bold transition-all text-sm ${!canEditInventory ? 'bg-slate-400 cursor-not-allowed opacity-75' : 'bg-blue-600 hover:bg-blue-700'}`}
+        >
             <Plus size={18} /> <span className="hidden sm:inline">Thêm Mới</span>
         </button>
       </div>
@@ -205,27 +230,52 @@ export const Inventory: React.FC<InventoryProps> = ({ items, setItems }) => {
           </div>
       </div>
 
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row gap-4 items-center">
-         <div className="relative flex-1 w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-                type="text" 
-                placeholder="Tìm tên vật tư, mã..." 
-                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-            />
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4">
+         <div className="flex flex-col md:flex-row gap-4 items-center w-full">
+             <div className="relative flex-1 w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                    type="text" 
+                    placeholder="Tìm tên vật tư, mã..." 
+                    className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                />
+             </div>
+             <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 hide-scrollbar">
+                 {['all', 'BOOK', 'UNIFORM', 'SCARF', 'OTHER'].map(cat => (
+                     <button 
+                        key={cat}
+                        onClick={() => setFilterCategory(cat)}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all border ${filterCategory === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                     >
+                         {cat === 'all' ? 'Tất cả' : cat === 'BOOK' ? 'Sách' : cat === 'UNIFORM' ? 'Đồng phục' : cat === 'SCARF' ? 'Khăn' : 'Khác'}
+                     </button>
+                 ))}
+             </div>
          </div>
-         <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 hide-scrollbar">
-             {['all', 'BOOK', 'UNIFORM', 'SCARF', 'OTHER'].map(cat => (
-                 <button 
-                    key={cat}
-                    onClick={() => setFilterCategory(cat)}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all border ${filterCategory === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+         <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-100 pt-3 gap-3">
+             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 self-start sm:self-center">
+                 Sắp xếp danh mục vật tư:
+             </div>
+             <div className="flex gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 justify-end">
+                 <select
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-bold text-slate-700 bg-white"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
                  >
-                     {cat === 'all' ? 'Tất cả' : cat === 'BOOK' ? 'Sách' : cat === 'UNIFORM' ? 'Đồng phục' : cat === 'SCARF' ? 'Khăn' : 'Khác'}
+                    <option value="name">Tên Vật Tư</option>
+                    <option value="quantity">Số Lượng Tồn</option>
+                    <option value="price">Đơn Giá</option>
+                    <option value="category">Phân Loại</option>
+                 </select>
+                 <button
+                    onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                    className="px-3 py-1.5 border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-700 font-bold text-xs bg-white shadow-sm flex items-center gap-1 min-w-[95px] justify-center"
+                 >
+                    {sortOrder === 'asc' ? 'Thấp-Cao ▲' : 'Cao-Thấp ▼'}
                  </button>
-             ))}
+             </div>
          </div>
       </div>
 

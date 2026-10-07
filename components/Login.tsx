@@ -6,9 +6,11 @@ import { Teacher } from '../types';
 
 interface LoginProps {
   onLogin: (user: Teacher) => void;
+  teachers: Teacher[];
+  setShowParentMeetingMinutes: (val: boolean) => void;
 }
 
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC<LoginProps> = ({ onLogin, teachers, setShowParentMeetingMinutes }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -19,7 +21,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     // MOCK LOGIN LOGIC
     // Check against username OR email OR id
     
-    const user = MOCK_TEACHERS.find(t => 
+    const user = teachers.find(t => 
       (t.username && t.username === username) || 
       t.email === username || 
       t.id === username
@@ -104,6 +106,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               className="w-full py-3 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
             >
               Đăng Nhập
+            </button>
+            <button 
+              type="button"
+              onClick={() => setShowParentMeetingMinutes(true)}
+              className="w-full py-3 bg-white text-blue-600 border border-blue-600 rounded-lg font-bold hover:bg-blue-50 transition-all"
+            >
+              Tra cứu biên bản họp
             </button>
           </form>
           

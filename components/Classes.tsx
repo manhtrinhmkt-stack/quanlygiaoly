@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { MOCK_TEACHERS } from '../constants';
 import { ClassRoom, SchoolYear, Student, Grade, Teacher } from '../types';
 import { Users, User, UserCheck, Edit, X, Save, CheckCircle2, Search } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface ClassesProps {
     classes: ClassRoom[];
@@ -16,14 +17,9 @@ interface ClassesProps {
 export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students, years, grades, currentUser }) => {
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('all');
-  const [toast, setToast] = useState<string | null>(null);
 
   const isAdmin = currentUser?.role === 'ADMIN';
-
-  const showToast = (message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 3000);
-  };
+  const isYearLocked = years.find(y => y.id === selectedYear)?.isLocked && !isAdmin;
 
   const [editingClass, setEditingClass] = useState<ClassRoom | null>(null);
   
@@ -69,42 +65,85 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
   };
 
   const handleSaveClass = () => {
+    if (isYearLocked) {
+        toast.error("Niên khóa này đã bị khóa. Không thể lưu thay đổi lớp học!");
+        return;
+    }
     if (editingClass) {
-        const combinedAssistants = assistants
+        const mainTeacher = mainTeacherInput.trim();
+        const assistantList = assistants
             .map(s => s.trim())
-            .filter(s => s !== '')
-            .join(', ');
+            .filter(s => s !== '');
+
+        // Check for duplicate assistants
+        const uniqueAssistants = new Set(assistantList);
+        if (uniqueAssistants.size !== assistantList.length) {
+            toast.error("Có GLV phụ trách bị trùng lặp!");
+            return;
+        }
+
+        // Check if main teacher is in assistants
+        if (mainTeacher && assistantList.includes(mainTeacher)) {
+            toast.error("GLV chủ nhiệm không được trùng với GLV phụ trách!");
+            return;
+        }
+
+        // Check if any teacher is already assigned to another class
+        const allTeachersInThisClass = [mainTeacher, ...assistantList].filter(t => t !== '');
+        for (const teacherName of allTeachersInThisClass) {
+            if (assignedTeachers.has(teacherName)) {
+                toast.error(`GLV ${teacherName} đã được sắp vào lớp khác!`);
+                return;
+            }
+        }
+
+        const combinedAssistants = assistantList.join(', ');
 
         const finalClassData = { 
             ...editingClass, 
-            mainTeacher: mainTeacherInput, 
+            mainTeacher: mainTeacher, 
             assistants: combinedAssistants 
         };
 
         const updatedClasses = classes.map(c => c.id === editingClass.id ? finalClassData : c);
         setClasses(updatedClasses);
-        showToast(`Đã cập nhật thông tin lớp ${editingClass.name} thành công!`);
+        toast.success(`Đã cập nhật thông tin lớp ${editingClass.name} thành công!`);
         setEditingClass(null);
     }
   };
+
+  const assignedTeachers = useMemo(() => {
+      const assigned = new Set<string>();
+      classes.forEach(c => {
+          if (editingClass && c.id === editingClass.id) return;
+          if (c.mainTeacher) assigned.add(c.mainTeacher.trim());
+          if (c.assistants) {
+              c.assistants.split(',').forEach(s => assigned.add(s.trim()));
+          }
+      });
+      return assigned;
+  }, [classes, editingClass]);
 
   const sortedTeachers = useMemo(() => {
       return [...MOCK_TEACHERS].sort((a, b) => a.fullName.localeCompare(b.fullName));
   }, []);
 
   const getFilteredTeachers = (input: string) => {
-      // Filter out INACTIVE teachers
-      const activeTeachers = sortedTeachers.filter(t => t.status !== 'INACTIVE');
+      // Filter out INACTIVE teachers AND already assigned teachers
+      const availableTeachers = sortedTeachers.filter(t => 
+          t.status !== 'INACTIVE' && 
+          !assignedTeachers.has(`${t.saintName} ${t.fullName}`)
+      );
       
-      if (!input) return activeTeachers;
+      if (!input) return availableTeachers;
       const lowerInput = input.toLowerCase();
-      return activeTeachers.filter(t => 
+      return availableTeachers.filter(t => 
           t.fullName.toLowerCase().includes(lowerInput) || 
           t.saintName.toLowerCase().includes(lowerInput)
       );
   };
 
-  const filteredMainTeacherSuggestions = useMemo(() => getFilteredTeachers(mainTeacherInput), [mainTeacherInput, sortedTeachers]);
+  const filteredMainTeacherSuggestions = useMemo(() => getFilteredTeachers(mainTeacherInput), [mainTeacherInput, sortedTeachers, assignedTeachers]);
 
   const updateAssistant = (index: number, value: string) => {
       const newAssistants = [...assistants];
@@ -134,14 +173,11 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
 
   return (
     <div className="p-6 h-screen flex flex-col relative">
-      {/* Toast Notification */}
-      {toast && (
-        <div className="fixed top-6 right-6 z-[100] animate-slide-in">
-           <div className="bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border border-emerald-500/50">
-              <CheckCircle2 size={24} />
-              <span className="font-bold">{toast}</span>
-           </div>
-        </div>
+      {isYearLocked && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-amber-800 text-xs font-bold mb-4 shadow-sm shrink-0">
+              <span className="text-amber-600 shrink-0">🔒</span>
+              <span>Niên khóa này đã bị khóa. Toàn bộ thông tin phân công lớp học hiển thị ở chế độ Chỉ Đọc. Quản trị viên hệ thống có thể mở khóa trong phần Cài đặt để chỉnh sửa phân công.</span>
+          </div>
       )}
 
       <div className="flex justify-between items-center mb-6">
@@ -200,8 +236,8 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
                                      <td className="px-4 py-3 text-center text-slate-600">{stats.female}</td>
                                      <td className="px-4 py-3 text-center font-medium text-slate-700">{c.room || '--'}</td>
                                      <td className="px-4 py-3 font-medium text-slate-800">{c.mainTeacher || '---'}</td>
-                                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate" title={c.assistants}>{c.assistants || '---'}</td>
-                                     {isAdmin && (
+                                     <td className="px-4 py-3 text-slate-600 font-medium" title={c.assistants}>{c.assistants || '---'}</td>
+                                     {isAdmin && !isYearLocked && (
                                          <td className="px-4 py-3 text-center">
                                              <button onClick={() => handleEditClass(c)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors">
                                                  <Edit size={18} />
@@ -226,74 +262,78 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
 
       {editingClass && isAdmin && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in flex flex-col max-h-[90vh]">
-                <div className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                    <h3 className="font-bold text-xl text-slate-800">Cập nhật Lớp học</h3>
-                    <button onClick={() => setEditingClass(null)} className="text-slate-400 hover:text-slate-600"><X size={22}/></button>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden animate-fade-in flex flex-col max-h-[90vh]">
+                <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                    <h3 className="font-bold text-2xl text-slate-800">Cập nhật Lớp học: <span className="text-blue-600">{editingClass.name}</span></h3>
+                    <button onClick={() => setEditingClass(null)} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={24}/></button>
                 </div>
-                <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar">
-                    <div>
-                        <label className="block text-base font-bold text-slate-700 mb-2">Tên Lớp</label>
-                        <input 
-                            type="text" 
-                            className="w-full p-3 border rounded-lg bg-slate-100 text-slate-500 text-base" 
-                            value={editingClass.name} 
-                            disabled 
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-base font-bold text-slate-700 mb-2">Số Phòng Học</label>
-                        <input 
-                            type="text" 
-                            className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-base" 
-                            value={editingClass.room || ''} 
-                            onChange={(e) => setEditingClass({...editingClass, room: e.target.value})}
-                            placeholder="Nhập số phòng..."
-                        />
-                    </div>
-                    
-                    <div className="relative">
-                        <label className="block text-base font-bold text-slate-700 mb-2">GLV Chủ Nhiệm</label>
-                        <div className="relative">
+                <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8 overflow-y-auto custom-scrollbar">
+                    <div className="space-y-6">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Tên Lớp</label>
                             <input 
-                                type="text"
-                                className="w-full p-3 pl-4 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-base"
-                                value={mainTeacherInput}
-                                onChange={(e) => {
-                                    setMainTeacherInput(e.target.value);
-                                    setShowMainTeacherSuggestions(true);
-                                }}
-                                onFocus={() => setShowMainTeacherSuggestions(true)}
-                                onBlur={() => setTimeout(() => setShowMainTeacherSuggestions(false), 200)}
-                                placeholder="Nhập tên GLV..."
+                                type="text" 
+                                className="w-full p-3 border rounded-xl bg-slate-100 text-slate-500 text-base font-medium" 
+                                value={editingClass.name} 
+                                disabled 
                             />
-                            <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                         </div>
-                        {showMainTeacherSuggestions && (
-                            <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto mt-1 custom-scrollbar">
-                                {filteredMainTeacherSuggestions.length > 0 ? (
-                                    filteredMainTeacherSuggestions.map(t => (
-                                        <div 
-                                            key={t.id}
-                                            className="p-3 hover:bg-blue-50 cursor-pointer text-base flex items-center justify-between border-b border-slate-50 last:border-0"
-                                            onClick={() => {
-                                                setMainTeacherInput(`${t.saintName} ${t.fullName}`);
-                                                setShowMainTeacherSuggestions(false);
-                                            }}
-                                        >
-                                            <span>{t.saintName} {t.fullName}</span>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="p-3 text-sm text-slate-400 text-center italic">Không tìm thấy GLV phù hợp</div>
-                                )}
-                            </div>
-                        )}
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Số Phòng Học</label>
+                            <input 
+                                type="text" 
+                                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base transition-all" 
+                                value={editingClass.room || ''} 
+                                onChange={(e) => setEditingClass({...editingClass, room: e.target.value})}
+                                placeholder="Nhập số phòng..."
+                            />
+                        </div>
                     </div>
                     
-                    <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-                        <label className="block text-base font-bold text-slate-700 mb-3">GLV Phụ Trách</label>
-                        <div className="space-y-3">
+                    <div className="space-y-6">
+                        <div className="relative">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">GLV Chủ Nhiệm</label>
+                            <div className="relative">
+                                <input 
+                                    type="text"
+                                    className="w-full p-3 pl-4 pr-10 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base transition-all"
+                                    value={mainTeacherInput}
+                                    onChange={(e) => {
+                                        setMainTeacherInput(e.target.value);
+                                        setShowMainTeacherSuggestions(true);
+                                    }}
+                                    onFocus={() => setShowMainTeacherSuggestions(true)}
+                                    onBlur={() => setTimeout(() => setShowMainTeacherSuggestions(false), 200)}
+                                    placeholder="Nhập tên GLV..."
+                                />
+                                <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                            </div>
+                            {showMainTeacherSuggestions && (
+                                <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-40 overflow-y-auto mt-1 custom-scrollbar">
+                                    {filteredMainTeacherSuggestions.length > 0 ? (
+                                        filteredMainTeacherSuggestions.map(t => (
+                                            <div 
+                                                key={t.id}
+                                                className="p-3 hover:bg-blue-50 cursor-pointer text-base flex items-center justify-between border-b border-slate-50 last:border-0 transition-colors"
+                                                onClick={() => {
+                                                    setMainTeacherInput(`${t.saintName} ${t.fullName}`);
+                                                    setShowMainTeacherSuggestions(false);
+                                                }}
+                                            >
+                                                <span>{t.saintName} {t.fullName}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="p-3 text-sm text-slate-400 text-center italic">Không tìm thấy GLV phù hợp</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div className="col-span-1 md:col-span-2 p-6 bg-slate-50 rounded-2xl border border-slate-200">
+                        <label className="block text-sm font-bold text-slate-700 mb-4">GLV Phụ Trách</label>
+                        <div className="grid grid-cols-1 gap-4">
                              {assistants.map((val, idx) => {
                                 const suggestions = getFilteredTeachers(val);
                                 return (
@@ -301,22 +341,22 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
                                         <div className="relative">
                                             <input 
                                                 type="text"
-                                                className="w-full p-3 pl-4 pr-8 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-base bg-white"
+                                                className="w-full p-3 pl-4 pr-10 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base bg-white transition-all"
                                                 placeholder={`GLV Phụ trách ${idx + 1}`}
                                                 value={val}
                                                 onChange={(e) => updateAssistant(idx, e.target.value)}
                                                 onFocus={() => toggleAssistSuggestion(idx, true)}
                                                 onBlur={() => setTimeout(() => toggleAssistSuggestion(idx, false), 200)}
                                             />
-                                             <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                                             <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
                                         </div>
                                         {showAssistSuggestions[idx] && (
-                                            <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto mt-1 custom-scrollbar">
+                                            <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-40 overflow-y-auto mt-1 custom-scrollbar">
                                                 {suggestions.length > 0 ? (
                                                     suggestions.map(t => (
                                                         <div 
                                                             key={t.id}
-                                                            className="p-3 hover:bg-blue-50 cursor-pointer text-base flex items-center justify-between border-b border-slate-50 last:border-0"
+                                                            className="p-3 hover:bg-blue-50 cursor-pointer text-base flex items-center justify-between border-b border-slate-50 last:border-0 transition-colors"
                                                             onClick={() => selectAssistant(idx, `${t.saintName} ${t.fullName}`)}
                                                         >
                                                             <span>{t.saintName} {t.fullName}</span>
@@ -333,19 +373,15 @@ export const Classes: React.FC<ClassesProps> = ({ classes, setClasses, students,
                         </div>
                     </div>
                 </div>
-                <div className="p-5 border-t border-slate-200 bg-slate-50 flex justify-end gap-3 mt-auto">
-                    <button onClick={() => setEditingClass(null)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium text-base">Hủy</button>
-                    <button onClick={handleSaveClass} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 text-base">
+                <div className="p-6 border-t border-slate-200 bg-slate-50 flex justify-end gap-4 mt-auto">
+                    <button onClick={() => setEditingClass(null)} className="px-6 py-3 text-slate-600 hover:bg-slate-200 rounded-xl font-bold text-base transition-all">Hủy</button>
+                    <button onClick={handleSaveClass} className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 flex items-center gap-2 text-base shadow-lg shadow-blue-200 transition-all">
                         <Save size={20} /> Lưu Thay Đổi
                     </button>
                 </div>
             </div>
         </div>
       )}
-      <style>{`
-        @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .animate-slide-in { animation: slide-in 0.3s ease-out; }
-      `}</style>
     </div>
   );
 };

@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Student, ClassRoom, SchoolYear, Grade, Teacher, AcademicRecord, ScoreColumn } from '../types';
+import { Student, ClassRoom, SchoolYear, Grade, Teacher, AcademicRecord, ScoreColumn, TermConfig } from '../types';
 import { ArrowRight, Search, CheckCircle2, Users, ArrowRightLeft, ArrowUpRight, GraduationCap, Filter, Globe, List, AlertCircle, X, Check, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface ClassPlacementProps {
     students: Student[];
@@ -12,15 +13,28 @@ interface ClassPlacementProps {
     currentUser: Teacher | null;
     records?: AcademicRecord[];
     scoreColumns?: ScoreColumn[];
+    termConfigs?: TermConfig[];
 }
 
 type Mode = 'TRANSFER' | 'PROMOTION';
 type SearchMode = 'CLASS' | 'GLOBAL';
 
-export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStudents, classes, years, grades, currentUser, records = [], scoreColumns = [] }) => {
+const safeFormatDate = (dateStr?: string) => {
+    if (!dateStr) return '';
+    try {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return dateStr;
+    } catch (e) {
+      return dateStr;
+    }
+};
+
+export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStudents, classes, years, grades, currentUser, records = [], scoreColumns = [], termConfigs = [] }) => {
   const [mode, setMode] = useState<Mode>('TRANSFER'); 
   const [searchMode, setSearchMode] = useState<SearchMode>('CLASS');
-  const [toast, setToast] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // === FILTER STATE ===
@@ -76,10 +90,19 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
   }, [allowedClasses, tgtYear, tgtGrade]);
 
   // Calculate Average Helper (similar to Grades.tsx)
-  const calculateAvg = (record: AcademicRecord) => {
+  const calculateAvg = (record: AcademicRecord, classId: string) => {
       let totalScore = 0;
       let totalWeight = 0;
-      const termColumns = scoreColumns.filter(c => c.term === record.term);
+      
+      const currentClass = classes.find(c => c.id === classId);
+      const currentGradeId = currentClass?.gradeId;
+
+      // Find columns for this grade -> global
+      let termColumns = scoreColumns.filter(c => c.term === record.term && c.gradeId === currentGradeId);
+      if (termColumns.length === 0) {
+          termColumns = scoreColumns.filter(c => c.term === record.term && !c.gradeId);
+      }
+
       termColumns.forEach(col => {
           const score = (record.scores && record.scores[col.id] !== undefined) ? record.scores[col.id] : 0;
           totalScore += score * col.weight;
@@ -96,10 +119,17 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
       const r1 = records.find(r => r.studentId === student.id && r.term === 'HK1');
       const r2 = records.find(r => r.studentId === student.id && r.term === 'HK2');
       
-      const avg1 = r1 ? calculateAvg(r1) : 0;
-      const avg2 = r2 ? calculateAvg(r2) : 0;
+      const avg1 = r1 ? calculateAvg(r1, student.classId) : 0;
+      const avg2 = r2 ? calculateAvg(r2, student.classId) : 0;
       
-      const avgYear = (avg1 > 0 || avg2 > 0) ? (avg1 + avg2) / 2 : 0;
+      const yearId = r1?.yearId || r2?.yearId;
+      const hk1Config = termConfigs.find(c => c.yearId === yearId && c.term === 'HK1');
+      const hk2Config = termConfigs.find(c => c.yearId === yearId && c.term === 'HK2');
+      
+      const w1 = hk1Config?.weight || 1;
+      const w2 = hk2Config?.weight || 1;
+      
+      const avgYear = (avg1 > 0 || avg2 > 0) ? (avg1 * w1 + avg2 * w2) / (w1 + w2) : 0;
       return avgYear >= 5.0 ? 'PASS' : 'RETAIN';
   };
 
@@ -126,13 +156,21 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
         list = list.filter(s => allowedIds.includes(s.classId));
     }
     
-    return list.slice(0, 100); 
+    return list.sort((a, b) => {
+        const nameA = a.fullName.split(' ').pop() || '';
+        const nameB = b.fullName.split(' ').pop() || '';
+        return nameA.localeCompare(nameB, 'vi');
+    }).slice(0, 100); 
   }, [students, srcClassId, srcSearch, searchMode, allowedClasses, currentUser]);
 
   // Students in Target Class (for preview)
   const tgtStudents = useMemo(() => {
     if (!tgtClassId) return [];
-    return students.filter(s => s.classId === tgtClassId);
+    return students.filter(s => s.classId === tgtClassId).sort((a, b) => {
+        const nameA = a.fullName.split(' ').pop() || '';
+        const nameB = b.fullName.split(' ').pop() || '';
+        return nameA.localeCompare(nameB, 'vi');
+    });
   }, [students, tgtClassId]);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -153,8 +191,13 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
   };
 
   const handleExecute = () => {
-      if (selectedStudentIds.length === 0) return alert("Chưa chọn học viên nào!");
-      if (!tgtClassId) return alert("Chưa chọn lớp đích!");
+      const isSrcLocked = years.find(y => y.id === srcYear)?.isLocked && currentUser?.role !== 'ADMIN';
+      const isTgtLocked = years.find(y => y.id === tgtYear)?.isLocked && currentUser?.role !== 'ADMIN';
+      if (isSrcLocked) return toast.error("Niên khóa nguồn đã bị khóa. Không thể thực hiện chuyển lớp!");
+      if (isTgtLocked) return toast.error("Niên khóa đích đã bị khóa. Không thể thực hiện chuyển lớp!");
+
+      if (selectedStudentIds.length === 0) return toast.error("Chưa chọn học viên nào!");
+      if (!tgtClassId) return toast.error("Chưa chọn lớp đích!");
       setShowConfirmModal(true);
   };
 
@@ -162,12 +205,12 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
       const tgtClass = classes.find(c => c.id === tgtClassId);
       const updatedStudents = students.map(s => {
           if (selectedStudentIds.includes(s.id)) {
-              return { ...s, classId: tgtClassId };
+              return { ...s, classId: tgtClassId, status: 'ACTIVE' as const };
           }
           return s;
       });
       setStudents(updatedStudents);
-      setToast(`Đã chuyển thành công ${selectedStudentIds.length} học viên!`);
+      toast.success(`Đã chuyển thành công ${selectedStudentIds.length} học viên!`);
       setSelectedStudentIds([]);
       setShowConfirmModal(false);
   };
@@ -176,22 +219,9 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
 
   return (
     <div className="p-6 h-screen flex flex-col bg-slate-100 relative">
-       {/* Toast */}
-       {toast && (
-        <div className="fixed top-6 right-6 z-[100] animate-slide-in">
-           <div className="bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border border-emerald-500/50">
-              <CheckCircle2 size={24} />
-              <span className="font-bold">{toast}</span>
-           </div>
-        </div>
-      )}
 
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
-        <div>
-            <h2 className="text-2xl font-bold text-slate-800">Xếp Lớp & Điều Chuyển</h2>
-            <p className="text-slate-500 text-sm">Quản lý danh sách học viên giữa các lớp</p>
-        </div>
         <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
             <button 
                 onClick={() => setMode('TRANSFER')}
@@ -309,7 +339,10 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
                                          />
                                          <div className="flex-1">
                                              <div className="flex justify-between items-center">
-                                                <div className="text-sm font-bold text-slate-800">{s.saintName} {s.fullName}</div>
+                                                <div className="flex items-center gap-2">
+                                                   <div className="text-sm font-bold text-slate-800">{s.saintName} {s.fullName}</div>
+                                                   {s.status === 'DROPPED' && <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-black border border-red-200 uppercase">Nghỉ</span>}
+                                                </div>
                                                 {mode === 'PROMOTION' && (
                                                     passStatus === 'PASS' ? (
                                                         <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-black border border-green-200 uppercase flex items-center gap-1"><Check size={10}/> Đạt</span>
@@ -319,7 +352,7 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
                                                 )}
                                                 {searchMode === 'GLOBAL' && mode !== 'PROMOTION' && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-medium">{getClassName(s.classId)}</span>}
                                              </div>
-                                             <div className="text-[10px] text-slate-400 font-mono mt-0.5">{s.id} - {new Date(s.dob).toLocaleDateString('vi-VN')}</div>
+                                             <div className="text-[10px] text-slate-400 font-mono mt-0.5">{s.id} - {safeFormatDate(s.dob)}</div>
                                          </div>
                                      </div>
                                  )})}
@@ -339,8 +372,9 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
                      )}
                  </div>
               </div>
-              <div className="p-3 bg-slate-50 border-t border-slate-200 text-xs font-bold text-slate-500 text-right">
-                  Đã chọn: {selectedStudentIds.length} / {srcStudents.length}
+              <div className="p-3 bg-slate-50 border-t border-slate-200 text-xs font-bold text-slate-500 flex justify-between items-center">
+                  <div>Nguồn: {srcStudents.length} hồ sơ ({srcStudents.filter(s => s.gender === 'Male').length} Nam, {srcStudents.filter(s => s.gender === 'Female').length} Nữ)</div>
+                  <div>Đã chọn: {selectedStudentIds.length}</div>
               </div>
           </div>
 
@@ -384,7 +418,9 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
                      {tgtClassId ? (
                          <div className="space-y-1">
-                             <div className="text-xs font-bold text-slate-400 uppercase p-2">Danh sách hiện tại ({tgtStudents.length})</div>
+                             <div className="text-[10px] font-black text-slate-400 uppercase p-2 tracking-widest border-b border-slate-100 mb-1">
+                                 Danh sách lớp hiện tại: {tgtStudents.length} ({tgtStudents.filter(s => s.gender === 'Male').length} Nam, {tgtStudents.filter(s => s.gender === 'Female').length} Nữ)
+                             </div>
                              {tgtStudents.map((s, idx) => (
                                  <div key={s.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-100">
                                      <div className="flex items-center gap-3">
@@ -404,6 +440,9 @@ export const ClassPlacement: React.FC<ClassPlacementProps> = ({ students, setStu
                          </div>
                      )}
                   </div>
+              </div>
+              <div className="p-3 bg-slate-50 border-t border-slate-200 text-xs font-bold text-slate-500">
+                  Lớp đích: {tgtStudents.length} hồ sơ ({tgtStudents.filter(s => s.gender === 'Male').length} Nam, {tgtStudents.filter(s => s.gender === 'Female').length} Nữ)
               </div>
           </div>
 

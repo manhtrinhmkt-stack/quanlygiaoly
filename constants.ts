@@ -2,7 +2,8 @@
 import { 
   Teacher, Student, ClassRoom, SchoolYear, Grade, 
   AcademicRecord, TermConfig, ScoreColumn, Saint, 
-  Transaction, InventoryItem, Announcement, DeviceRequest
+  Transaction, InventoryItem, Announcement, DeviceRequest,
+  CurriculumItem
 } from './types';
 
 // --- HELPER DATA FOR GENERATION ---
@@ -32,6 +33,7 @@ export const MOCK_GRADES: Grade[] = [
   { id: 'g2', name: 'Khối Rước Lễ' },
   { id: 'g3', name: 'Khối Thêm Sức' },
   { id: 'g4', name: 'Khối Bao Đồng' },
+  { id: 'g5', name: 'Khối Kinh Thánh' },
 ];
 
 export const MOCK_CLASSES: ClassRoom[] = [
@@ -102,7 +104,7 @@ const generatedTeachers: Teacher[] = Array.from({ length: 35 }).map((_, i) => {
     status: Math.random() > 0.1 ? 'ACTIVE' : 'INACTIVE', // 10% chance of being inactive
     username: `glv${i + 3}`,
     password: '123',
-    allowedTabs: ['dashboard', 'classes', 'students', 'attendance', 'grades', 'devices']
+    allowedTabs: ['dashboard', 'classes', 'students', 'attendance', 'qr-attendance', 'grades', 'devices']
   };
 });
 
@@ -136,7 +138,7 @@ export const MOCK_TEACHERS: Teacher[] = [
     status: 'ACTIVE',
     username: 'glv01',
     password: '123',
-    allowedTabs: ['dashboard', 'classes', 'students', 'attendance', 'grades', 'devices']
+    allowedTabs: ['dashboard', 'classes', 'students', 'attendance', 'qr-attendance', 'grades', 'devices']
   },
   {
     id: 'glv02',
@@ -152,7 +154,7 @@ export const MOCK_TEACHERS: Teacher[] = [
     status: 'ACTIVE',
     username: 'glv02',
     password: '123',
-    allowedTabs: ['dashboard', 'attendance', 'devices']
+    allowedTabs: ['dashboard', 'attendance', 'qr-attendance', 'devices']
   },
   ...generatedTeachers
 ];
@@ -170,12 +172,13 @@ const generatedStudents: Student[] = Array.from({ length: 35 }).map((_, i) => {
     dob: getRandomDate(new Date(2010, 0, 1), new Date(2017, 0, 1)),
     saintName: saint,
     gender: gender as 'Male' | 'Female',
-    status: Math.random() > 0.9 ? (Math.random() > 0.5 ? 'TRANSFERRED' : 'DROPPED') : 'ACTIVE',
+    status: Math.random() > 0.9 ? 'DROPPED' : 'ACTIVE',
     classId: classId,
     fatherName: `${getRandomItem(LAST_NAMES)} ${getRandomItem(MIDDLE_NAMES)} ${getRandomItem(FIRST_NAMES)}`,
     motherName: `${getRandomItem(LAST_NAMES)} ${getRandomItem(MIDDLE_NAMES)} ${getRandomItem(FIRST_NAMES)}`,
     fatherPhone: Math.random() > 0.2 ? `09${getRandomInt(10000000, 99999999)}` : undefined,
     motherPhone: Math.random() > 0.2 ? `09${getRandomInt(10000000, 99999999)}` : undefined,
+    email: `phuhuynh_${i + 4}@gmail.com`,
     address: `${getRandomInt(1, 500)} Đường số ${getRandomInt(1, 10)}, P.${getRandomInt(1,15)}`,
     note: Math.random() > 0.8 ? 'Gia đình khó khăn' : '',
     parish: 'Gx. Tân Thành',
@@ -195,6 +198,7 @@ export const MOCK_STUDENTS: Student[] = [
     fatherName: 'Nguyễn Văn Ba',
     motherName: 'Lê Thị Tư',
     fatherPhone: '0901234567',
+    email: 'phuhuynh_an@gmail.com',
     address: '123 Đường Số 1',
   },
   {
@@ -207,6 +211,7 @@ export const MOCK_STUDENTS: Student[] = [
     classId: 'c1',
     motherName: 'Phạm Thị Sáu',
     motherPhone: '0909876543',
+    email: 'phuhuynh_binh@gmail.com',
     address: '456 Đường Số 2',
   },
   {
@@ -217,6 +222,7 @@ export const MOCK_STUDENTS: Student[] = [
     gender: 'Male',
     status: 'ACTIVE',
     classId: 'c2',
+    email: 'phuhuynh_cuong@gmail.com',
     address: '789 Đường Số 3',
   },
   ...generatedStudents
@@ -239,8 +245,8 @@ MOCK_STUDENTS.forEach(student => {
         scorePray: 0,
         scoreExam: 0,
         average: s1_avg,
-        absentP: getRandomInt(0, 2),
-        absentK: getRandomInt(0, 1)
+        absentP: getRandomInt(0, 5),
+        absentK: getRandomInt(0, 3)
     });
 
     // Generate for HK2 (some missing to simulate current progress)
@@ -257,8 +263,8 @@ MOCK_STUDENTS.forEach(student => {
             scorePray: 0,
             scoreExam: 0,
             average: s2_avg,
-            absentP: getRandomInt(0, 3),
-            absentK: getRandomInt(0, 2)
+            absentP: getRandomInt(0, 5),
+            absentK: getRandomInt(0, 3)
         });
     }
 });
@@ -315,3 +321,91 @@ export const MOCK_INVENTORY: InventoryItem[] = [
   { id: 'INV2', name: 'Khăn Quàng Ấu', category: 'SCARF', quantity: 100, minQuantity: 20, unit: 'Cái', price: 10000 },
   ...generatedInventory
 ];
+
+// 6. ATTENDANCE DATA (Mock for recent Sundays)
+const generateAttendance = () => {
+    const data: Record<string, 'C' | 'P' | 'K' | ''> = {};
+    const sundays = ['2024-03-17', '2024-03-24', '2024-03-31', '2024-04-07'];
+    
+    MOCK_STUDENTS.slice(0, 20).forEach(student => {
+        sundays.forEach(date => {
+            // Randomly assign status: 80% Present, 10% Excused, 5% Unexcused, 5% Empty
+            const rand = Math.random();
+            let status: 'C' | 'P' | 'K' | '' = 'C';
+            if (rand > 0.95) status = '';
+            else if (rand > 0.9) status = 'K';
+            else if (rand > 0.8) status = 'P';
+            
+            data[`${student.id}-${date}-class`] = status;
+            
+            // Mass attendance usually matches class or slightly different
+            const massRand = Math.random();
+            let massStatus = status;
+            if (massRand > 0.9) massStatus = 'K';
+            
+            data[`${student.id}-${date}-mass`] = massStatus;
+        });
+    });
+    return data;
+};
+
+export const MOCK_ATTENDANCE_DATA = generateAttendance();
+
+export const MOCK_CURRICULUM: CurriculumItem[] = [
+  {
+    id: 'curr-1',
+    week: 'Tuần 1',
+    liturgicalFeast: 'Chúa nhật 22 Thường Niên (Khai Giảng)',
+    classIds: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'],
+    lessonContent: 'Khai mạc năm học mới & Ổn định lớp học',
+    notes: 'GLV chuẩn bị danh sách lớp học viên, phát tập vở và nội quy lớp học',
+    updatedBy: 'Giuse Trần Văn Hùng',
+    updatedAt: '2023-09-03',
+    yearId: '2023-2024'
+  },
+  {
+    id: 'curr-2',
+    week: 'Tuần 2',
+    liturgicalFeast: 'Chúa nhật 23 Thường Niên',
+    classIds: ['c1', 'c5'],
+    lessonContent: 'Bài 1: Thiên Chúa Sáng Tạo nên vũ trụ và con người',
+    notes: 'Học viên mang theo bút màu và giấy vẽ',
+    updatedBy: 'Maria Nguyễn Thị Lan',
+    updatedAt: '2023-09-10',
+    yearId: '2023-2024'
+  },
+  {
+    id: 'curr-3',
+    week: 'Tuần 2',
+    liturgicalFeast: 'Chúa nhật 23 Thường Niên',
+    classIds: ['c2', 'c6'],
+    lessonContent: 'Bài 1: Thiên Chúa là Cha yêu thương',
+    notes: 'Khuyên bảo học viên tập thói quen cầu nguyện trước khi ngủ',
+    updatedBy: 'Phêrô Lê Minh',
+    updatedAt: '2023-09-10',
+    yearId: '2023-2024'
+  },
+  {
+    id: 'curr-4',
+    week: 'Tuần 3',
+    liturgicalFeast: 'Chúa nhật 24 Thường Niên (Hội chợ Trung Thu)',
+    classIds: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'],
+    lessonContent: 'Ý nghĩa tết Trung Thu Kitô giáo và tham dự vui chơi',
+    notes: 'GLV hỗ trợ giữ trật tự tại các gian hàng và phát phiếu thưởng cho học viên',
+    updatedBy: 'Giuse Nguyễn Văn Đức',
+    updatedAt: '2023-09-17',
+    yearId: '2023-2024'
+  },
+  {
+    id: 'curr-5',
+    week: 'Tuần 4',
+    liturgicalFeast: 'Chúa nhật 25 Thường Niên',
+    classIds: ['c3'],
+    lessonContent: 'Bài 2: Bảy Hồng Ân Chúa Thánh Thần',
+    notes: 'Khuyến khích học viên học thuộc lòng 7 Hồng Ân Chúa Thánh Thần',
+    updatedBy: 'Anna Phạm Thị Thảo',
+    updatedAt: '2023-09-24',
+    yearId: '2023-2024'
+  }
+];
+
